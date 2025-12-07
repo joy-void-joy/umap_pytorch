@@ -3,6 +3,22 @@ from torch.utils.data import Dataset, DataLoader
 import numpy as np
 
 
+class SubsetDataset(Dataset):
+    """
+    A dataset that wraps another dataset and only exposes a subset of indices.
+    Useful for training on a sample of a larger dataset.
+    """
+    def __init__(self, dataset, indices):
+        self.dataset = dataset
+        self.indices = indices
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, index):
+        return self.dataset[self.indices[index]]
+
+
 def get_item_from_dataset(dataset, index):
     """Extract data item from a dataset, handling tuple returns (e.g., (data, label))."""
     item = dataset[index]

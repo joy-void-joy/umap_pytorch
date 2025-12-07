@@ -1,12 +1,13 @@
 import pytorch_lightning as pl
 import torch
+import numpy as np
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 from torch.nn.functional import mse_loss
 import torch.nn.functional as F
 
-from umap_pytorch.data import UMAPDataset, MatchDataset, get_item_from_dataset
-from umap_pytorch.modules import get_umap_graph, umap_loss
+from umap_pytorch.data import UMAPDataset, MatchDataset, SubsetDataset, get_item_from_dataset
+from umap_pytorch.modules import get_umap_graph, umap_loss, get_umap_graph_from_hnswlib, get_umap_graph_from_precomputed_knn
 from umap_pytorch.model import default_encoder, default_decoder
 
 from umap.umap_ import find_ab_params
@@ -14,13 +15,38 @@ import dill
 from umap import UMAP
 
 
-def extract_data_from_dataset(dataset):
+def extract_data_sample_from_dataset(dataset, sample_size=None, random_state=None):
     """
-    Extract all data from a dataset into a single tensor.
-    Handles datasets that return tuples (e.g., (data, label)).
+    Extract a sample of data from a dataset for graph construction.
+
+    For large datasets, this avoids loading all data into memory by only
+    extracting a representative sample for building the UMAP graph.
+
+    Args:
+        dataset: A PyTorch Dataset.
+        sample_size: Number of samples to extract. If None, extracts all data.
+        random_state: Random state for reproducible sampling.
+
+    Returns:
+        Tuple of (data_tensor, sample_indices) where sample_indices maps
+        to the original dataset indices.
     """
-    items = [get_item_from_dataset(dataset, i) for i in range(len(dataset))]
-    return torch.stack(items)
+    n_samples = len(dataset)
+
+    if sample_size is None or sample_size >= n_samples:
+        # Extract all data (only for small datasets)
+        indices = list(range(n_samples))
+        items = [get_item_from_dataset(dataset, i) for i in indices]
+        return torch.stack(items), indices
+
+    # Sample a subset of the data
+    rng = np.random.default_rng(random_state)
+    indices = rng.choice(n_samples, size=sample_size, replace=False).tolist()
+    indices.sort()  # Sort for potential cache efficiency
+
+    items = [get_item_from_dataset(dataset, i) for i in indices]
+    return torch.stack(items), indices
+
 
 """ Model """
 
@@ -118,7 +144,35 @@ class PUMAP():
         num_workers=1,
         num_gpus=1,
         match_nonparametric_umap=False,
+        graph_sample_size=None,
+        data_shape=None,
     ):
+        """
+        Parametric UMAP implementation using PyTorch.
+
+        Args:
+            encoder: Neural network encoder. If None, uses default MLP.
+            decoder: Neural network decoder. If None, no reconstruction.
+                     If True, uses default decoder.
+            n_neighbors: Number of neighbors for KNN graph.
+            min_dist: Minimum distance in embedding space.
+            metric: Distance metric for KNN.
+            n_components: Dimensionality of output embedding.
+            beta: Weight for reconstruction loss.
+            reconstruction_loss: Loss function for decoder.
+            random_state: Random state for reproducibility.
+            lr: Learning rate.
+            epochs: Number of training epochs.
+            batch_size: Training batch size.
+            num_workers: DataLoader workers.
+            num_gpus: GPU devices.
+            match_nonparametric_umap: If True, train to match non-parametric UMAP.
+            graph_sample_size: Number of samples to use for graph construction.
+                               If None, uses all data (not recommended for large datasets).
+                               For datasets > 100k samples, consider using 10000-50000.
+            data_shape: Shape of a single data item (excluding batch dimension).
+                        Required when using precomputed_graph. Inferred from dataset otherwise.
+        """
         self.encoder = encoder
         self.decoder = decoder
         self.n_neighbors = n_neighbors
@@ -134,24 +188,34 @@ class PUMAP():
         self.num_workers = num_workers
         self.num_gpus = num_gpus
         self.match_nonparametric_umap = match_nonparametric_umap
+        self.graph_sample_size = graph_sample_size
+        self.data_shape = data_shape
         
-    def fit(self, dataset):
+    def fit(self, dataset, precomputed_graph=None, hnsw_index=None, knn_batch_size=1000):
         """
         Fit the parametric UMAP model.
 
         Args:
             dataset: A PyTorch Dataset. Each item should be a data tensor or
                      a tuple where the first element is the data tensor.
+            precomputed_graph: Optional precomputed UMAP graph (sparse matrix).
+                               If provided, skips graph construction entirely.
+            hnsw_index: Optional hnswlib index for efficient KNN queries.
+                        Use this for very large datasets (>100k samples) to avoid
+                        loading all data into memory. The index should be built
+                        on the same data.
+            knn_batch_size: Batch size for querying the hnswlib index.
         """
         trainer = pl.Trainer(accelerator='gpu', devices=1, max_epochs=self.epochs)
 
-        # Extract data from dataset to build the UMAP graph
-        # This is necessary because UMAP needs all data to compute KNN
-        print("Extracting data from dataset for graph construction...")
-        X = extract_data_from_dataset(dataset)
-
-        # Get shape for encoder/decoder initialization
-        data_shape = X.shape[1:]
+        # Determine data shape for encoder/decoder initialization
+        if self.data_shape is not None:
+            data_shape = self.data_shape
+        else:
+            # Get shape from first item in dataset
+            first_item = get_item_from_dataset(dataset, 0)
+            data_shape = first_item.shape
+            print(f"Inferred data shape: {data_shape}")
 
         encoder = default_encoder(data_shape, self.n_components) if self.encoder is None else self.encoder
 
@@ -160,18 +224,66 @@ class PUMAP():
         elif self.decoder == True:
             decoder = default_decoder(data_shape, self.n_components)
 
-
         if not self.match_nonparametric_umap:
             self.model = Model(self.lr, encoder, decoder, beta=self.beta, min_dist=self.min_dist, reconstruction_loss=self.reconstruction_loss)
-            graph = get_umap_graph(X, n_neighbors=self.n_neighbors, metric=self.metric, random_state=self.random_state)
+
+            if precomputed_graph is not None:
+                print("Using precomputed graph")
+                graph = precomputed_graph
+            elif hnsw_index is not None:
+                # Use hnswlib index for efficient KNN - no need to load all data
+                print(f"Building UMAP graph using hnswlib index (batch_size={knn_batch_size})...")
+                graph = get_umap_graph_from_hnswlib(
+                    hnsw_index, dataset, get_item_from_dataset,
+                    n_neighbors=self.n_neighbors, batch_size=knn_batch_size,
+                    random_state=self.random_state, verbose=True
+                )
+            else:
+                # Extract sample for graph construction
+                n_dataset = len(dataset)
+                sample_size = self.graph_sample_size
+
+                if sample_size is not None and sample_size < n_dataset:
+                    print(f"Sampling {sample_size} points from {n_dataset} for graph construction...")
+                    X_sample, sample_indices = extract_data_sample_from_dataset(
+                        dataset, sample_size=sample_size, random_state=self.random_state
+                    )
+                    print("Building UMAP graph from sample...")
+                    graph = get_umap_graph(X_sample, n_neighbors=self.n_neighbors, metric=self.metric, random_state=self.random_state)
+
+                    # Create a subset dataset for training (only sampled points)
+                    dataset = SubsetDataset(dataset, sample_indices)
+                else:
+                    print(f"Extracting all {n_dataset} samples for graph construction...")
+                    X_all, _ = extract_data_sample_from_dataset(dataset, sample_size=None)
+                    print("Building UMAP graph...")
+                    graph = get_umap_graph(X_all, n_neighbors=self.n_neighbors, metric=self.metric, random_state=self.random_state)
+
             trainer.fit(
                 model=self.model,
                 datamodule=Datamodule(UMAPDataset(dataset, graph), self.batch_size, self.num_workers)
-                )
+            )
         else:
+            # For match_nonparametric_umap mode, sample if needed
+            n_dataset = len(dataset)
+            sample_size = self.graph_sample_size
+
+            if sample_size is not None and sample_size < n_dataset:
+                print(f"Sampling {sample_size} points from {n_dataset} for non-parametric UMAP...")
+                X_sample, sample_indices = extract_data_sample_from_dataset(
+                    dataset, sample_size=sample_size, random_state=self.random_state
+                )
+                dataset = SubsetDataset(dataset, sample_indices)
+            else:
+                print(f"Extracting all {n_dataset} samples for non-parametric UMAP...")
+                X_sample, _ = extract_data_sample_from_dataset(dataset, sample_size=None)
+
             print("Fitting Non parametric Umap")
-            non_parametric_umap = UMAP(n_neighbors=self.n_neighbors, min_dist=self.min_dist, metric=self.metric, n_components=self.n_components, random_state=self.random_state, verbose=True)
-            non_parametric_embeddings = non_parametric_umap.fit_transform(torch.flatten(X, 1, -1).numpy())
+            non_parametric_umap = UMAP(
+                n_neighbors=self.n_neighbors, min_dist=self.min_dist, metric=self.metric,
+                n_components=self.n_components, random_state=self.random_state, verbose=True
+            )
+            non_parametric_embeddings = non_parametric_umap.fit_transform(torch.flatten(X_sample, 1, -1).numpy())
             self.model = Model(self.lr, encoder, decoder, beta=self.beta, reconstruction_loss=self.reconstruction_loss, match_nonparametric_umap=self.match_nonparametric_umap)
             print("Training NN to match embeddings")
             trainer.fit(
