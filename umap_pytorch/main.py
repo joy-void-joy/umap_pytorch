@@ -1,17 +1,26 @@
 import pytorch_lightning as pl
 import torch
 from torch import nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from torch.nn.functional import mse_loss
 import torch.nn.functional as F
 
-from umap_pytorch.data import UMAPDataset, MatchDataset
+from umap_pytorch.data import UMAPDataset, MatchDataset, get_item_from_dataset
 from umap_pytorch.modules import get_umap_graph, umap_loss
 from umap_pytorch.model import default_encoder, default_decoder
 
 from umap.umap_ import find_ab_params
 import dill
 from umap import UMAP
+
+
+def extract_data_from_dataset(dataset):
+    """
+    Extract all data from a dataset into a single tensor.
+    Handles datasets that return tuples (e.g., (data, label)).
+    """
+    items = [get_item_from_dataset(dataset, i) for i in range(len(dataset))]
+    return torch.stack(items)
 
 """ Model """
 
@@ -126,22 +135,38 @@ class PUMAP():
         self.num_gpus = num_gpus
         self.match_nonparametric_umap = match_nonparametric_umap
         
-    def fit(self, X):
+    def fit(self, dataset):
+        """
+        Fit the parametric UMAP model.
+
+        Args:
+            dataset: A PyTorch Dataset. Each item should be a data tensor or
+                     a tuple where the first element is the data tensor.
+        """
         trainer = pl.Trainer(accelerator='gpu', devices=1, max_epochs=self.epochs)
-        encoder = default_encoder(X.shape[1:], self.n_components) if self.encoder is None else self.encoder
-        
+
+        # Extract data from dataset to build the UMAP graph
+        # This is necessary because UMAP needs all data to compute KNN
+        print("Extracting data from dataset for graph construction...")
+        X = extract_data_from_dataset(dataset)
+
+        # Get shape for encoder/decoder initialization
+        data_shape = X.shape[1:]
+
+        encoder = default_encoder(data_shape, self.n_components) if self.encoder is None else self.encoder
+
         if self.decoder is None or isinstance(self.decoder, nn.Module):
             decoder = self.decoder
         elif self.decoder == True:
-            decoder = default_decoder(X.shape[1:], self.n_components)
-            
-            
+            decoder = default_decoder(data_shape, self.n_components)
+
+
         if not self.match_nonparametric_umap:
             self.model = Model(self.lr, encoder, decoder, beta=self.beta, min_dist=self.min_dist, reconstruction_loss=self.reconstruction_loss)
             graph = get_umap_graph(X, n_neighbors=self.n_neighbors, metric=self.metric, random_state=self.random_state)
             trainer.fit(
                 model=self.model,
-                datamodule=Datamodule(UMAPDataset(X, graph), self.batch_size, self.num_workers)
+                datamodule=Datamodule(UMAPDataset(dataset, graph), self.batch_size, self.num_workers)
                 )
         else:
             print("Fitting Non parametric Umap")
@@ -151,7 +176,7 @@ class PUMAP():
             print("Training NN to match embeddings")
             trainer.fit(
                 model=self.model,
-                datamodule=Datamodule(MatchDataset(X, non_parametric_embeddings), self.batch_size, self.num_workers)
+                datamodule=Datamodule(MatchDataset(dataset, non_parametric_embeddings), self.batch_size, self.num_workers)
             )
         
     @torch.no_grad()

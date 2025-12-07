@@ -2,6 +2,15 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
 
+
+def get_item_from_dataset(dataset, index):
+    """Extract data item from a dataset, handling tuple returns (e.g., (data, label))."""
+    item = dataset[index]
+    if isinstance(item, tuple):
+        return item[0]
+    return item
+
+
 def get_graph_elements(graph_, n_epochs):
 
     graph = graph_.tocoo()
@@ -28,32 +37,56 @@ def get_graph_elements(graph_, n_epochs):
 
     return graph, epochs_per_sample, head, tail, weight, n_vertices
 
+
 class UMAPDataset(Dataset):
-    def __init__(self, data, graph_, n_epochs=200):
+    def __init__(self, dataset, graph_, n_epochs=200):
+        """
+        UMAP Dataset that wraps an existing PyTorch Dataset.
+
+        Args:
+            dataset: A PyTorch Dataset. If items are tuples (e.g., (data, label)),
+                     only the first element (data) is used.
+            graph_: The UMAP graph (sparse matrix) defining edge relationships.
+            n_epochs: Number of training epochs for edge sampling.
+        """
         graph, epochs_per_sample, head, tail, weight, n_vertices = get_graph_elements(graph_, n_epochs)
-        
+
         self.edges_to_exp, self.edges_from_exp = (
-        np.repeat(head, epochs_per_sample.astype("int")),
-        np.repeat(tail, epochs_per_sample.astype("int")),
-    )
+            np.repeat(head, epochs_per_sample.astype("int")),
+            np.repeat(tail, epochs_per_sample.astype("int")),
+        )
         shuffle_mask = np.random.permutation(np.arange(len(self.edges_to_exp)))
         self.edges_to_exp = self.edges_to_exp[shuffle_mask].astype(np.int64)
         self.edges_from_exp = self.edges_from_exp[shuffle_mask].astype(np.int64)
-        self.data = torch.Tensor(data)
-        
+        self.dataset = dataset
+
     def __len__(self):
-        return int(self.data.shape[0])
-    
+        return len(self.edges_to_exp)
+
     def __getitem__(self, index):
-        edges_to_exp = self.data[self.edges_to_exp[index]]
-        edges_from_exp = self.data[self.edges_from_exp[index]]
+        edge_to_idx = self.edges_to_exp[index]
+        edge_from_idx = self.edges_from_exp[index]
+        edges_to_exp = get_item_from_dataset(self.dataset, edge_to_idx)
+        edges_from_exp = get_item_from_dataset(self.dataset, edge_from_idx)
         return (edges_to_exp, edges_from_exp)
-    
+
+
 class MatchDataset(Dataset):
-    def __init__(self, data, embeddings):
+    def __init__(self, dataset, embeddings):
+        """
+        Dataset for matching parametric UMAP to non-parametric embeddings.
+
+        Args:
+            dataset: A PyTorch Dataset. If items are tuples (e.g., (data, label)),
+                     only the first element (data) is used.
+            embeddings: Pre-computed non-parametric UMAP embeddings.
+        """
         self.embeddings = torch.Tensor(embeddings)
-        self.data = data
+        self.dataset = dataset
+
     def __len__(self):
-        return int(self.data.shape[0])
+        return len(self.dataset)
+
     def __getitem__(self, index):
-        return self.data[index], self.embeddings[index]
+        data = get_item_from_dataset(self.dataset, index)
+        return data, self.embeddings[index]
