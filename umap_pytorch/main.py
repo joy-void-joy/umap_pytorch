@@ -6,7 +6,8 @@ from torch.utils.data import DataLoader, Dataset
 from torch.nn.functional import mse_loss
 import torch.nn.functional as F
 
-from umap_pytorch.data import UMAPDataset, MatchDataset, SubsetDataset, get_item_from_dataset
+from torch.utils.data import Subset
+from umap_pytorch.data import UMAPDataset, MatchDataset, get_item_from_dataset
 from umap_pytorch.modules import get_umap_graph, umap_loss, get_umap_graph_from_hnswlib, get_umap_graph_from_precomputed_knn
 from umap_pytorch.model import default_encoder, default_decoder
 
@@ -252,7 +253,7 @@ class PUMAP():
                     graph = get_umap_graph(X_sample, n_neighbors=self.n_neighbors, metric=self.metric, random_state=self.random_state)
 
                     # Create a subset dataset for training (only sampled points)
-                    dataset = SubsetDataset(dataset, sample_indices)
+                    dataset = Subset(dataset, sample_indices)
                 else:
                     print(f"Extracting all {n_dataset} samples for graph construction...")
                     X_all, _ = extract_data_sample_from_dataset(dataset, sample_size=None)
@@ -273,7 +274,7 @@ class PUMAP():
                 X_sample, sample_indices = extract_data_sample_from_dataset(
                     dataset, sample_size=sample_size, random_state=self.random_state
                 )
-                dataset = SubsetDataset(dataset, sample_indices)
+                dataset = Subset(dataset, sample_indices)
             else:
                 print(f"Extracting all {n_dataset} samples for non-parametric UMAP...")
                 X_sample, _ = extract_data_sample_from_dataset(dataset, sample_size=None)
