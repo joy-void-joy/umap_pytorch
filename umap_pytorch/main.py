@@ -8,7 +8,12 @@ import torch.nn.functional as F
 
 from torch.utils.data import Subset
 from umap_pytorch.data import UMAPDataset, MatchDataset, get_item_from_dataset
-from umap_pytorch.modules import get_umap_graph, umap_loss, get_umap_graph_from_hnswlib, get_umap_graph_from_precomputed_knn
+from umap_pytorch.modules import (
+    get_umap_graph,
+    umap_loss,
+    get_umap_graph_from_hnswlib,
+    get_umap_graph_from_precomputed_knn,
+)
 from umap_pytorch.model import default_encoder, default_decoder
 
 from umap.umap_ import find_ab_params
@@ -58,7 +63,7 @@ class Model(pl.LightningModule):
         lr: float,
         encoder: nn.Module,
         decoder=None,
-        beta = 1.0,
+        beta=1.0,
         min_dist=0.1,
         reconstruction_loss=F.binary_cross_entropy_with_logits,
         match_nonparametric_umap=False,
@@ -67,7 +72,7 @@ class Model(pl.LightningModule):
         self.lr = lr
         self.encoder = encoder
         self.decoder = decoder
-        self.beta = beta # weight for reconstruction loss
+        self.beta = beta  # weight for reconstruction loss
         self.match_nonparametric_umap = match_nonparametric_umap
         self.reconstruction_loss = reconstruction_loss
         self._a, self._b = find_ab_params(1.0, min_dist)
@@ -78,10 +83,20 @@ class Model(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         if not self.match_nonparametric_umap:
             (edges_to_exp, edges_from_exp) = batch
-            embedding_to, embedding_from = self.encoder(edges_to_exp), self.encoder(edges_from_exp)
-            encoder_loss = umap_loss(embedding_to, embedding_from, self._a, self._b, edges_to_exp.shape[0], negative_sample_rate=5)
+            embedding_to, embedding_from = (
+                self.encoder(edges_to_exp),
+                self.encoder(edges_from_exp),
+            )
+            encoder_loss = umap_loss(
+                embedding_to,
+                embedding_from,
+                self._a,
+                self._b,
+                edges_to_exp.shape[0],
+                negative_sample_rate=5,
+            )
             self.log("umap_loss", encoder_loss, prog_bar=True)
-            
+
             if self.decoder:
                 recon = self.decoder(embedding_to)
                 recon_loss = self.reconstruction_loss(recon, edges_to_exp)
@@ -89,7 +104,7 @@ class Model(pl.LightningModule):
                 return encoder_loss + self.beta * recon_loss
             else:
                 return encoder_loss
-            
+
         else:
             data, embedding = batch
             embedding_parametric = self.encoder(data)
@@ -102,7 +117,7 @@ class Model(pl.LightningModule):
                 return encoder_loss + self.beta * recon_loss
             else:
                 return encoder_loss
-            
+
 
 """ Datamodule """
 
@@ -111,7 +126,7 @@ class Datamodule(pl.LightningDataModule):
     def __init__(
         self,
         dataset,
-        batch_size,        
+        batch_size,
         num_workers,
     ):
         super().__init__()
@@ -127,7 +142,8 @@ class Datamodule(pl.LightningDataModule):
             shuffle=True,
         )
 
-class PUMAP():
+
+class PUMAP:
     def __init__(
         self,
         encoder=None,
@@ -191,8 +207,10 @@ class PUMAP():
         self.match_nonparametric_umap = match_nonparametric_umap
         self.graph_sample_size = graph_sample_size
         self.data_shape = data_shape
-        
-    def fit(self, dataset, precomputed_graph=None, hnsw_index=None, knn_batch_size=1000):
+
+    def fit(
+        self, dataset, precomputed_graph=None, hnsw_index=None, knn_batch_size=1000
+    ):
         """
         Fit the parametric UMAP model.
 
@@ -207,7 +225,7 @@ class PUMAP():
                         on the same data.
             knn_batch_size: Batch size for querying the hnswlib index.
         """
-        trainer = pl.Trainer(accelerator='gpu', devices=1, max_epochs=self.epochs)
+        trainer = pl.Trainer(accelerator="gpu", devices=1, max_epochs=self.epochs)
 
         # Determine data shape for encoder/decoder initialization
         if self.data_shape is not None:
@@ -218,7 +236,11 @@ class PUMAP():
             data_shape = first_item.shape
             print(f"Inferred data shape: {data_shape}")
 
-        encoder = default_encoder(data_shape, self.n_components) if self.encoder is None else self.encoder
+        encoder = (
+            default_encoder(data_shape, self.n_components)
+            if self.encoder is None
+            else self.encoder
+        )
 
         if self.decoder is None or isinstance(self.decoder, nn.Module):
             decoder = self.decoder
@@ -226,18 +248,31 @@ class PUMAP():
             decoder = default_decoder(data_shape, self.n_components)
 
         if not self.match_nonparametric_umap:
-            self.model = Model(self.lr, encoder, decoder, beta=self.beta, min_dist=self.min_dist, reconstruction_loss=self.reconstruction_loss)
+            self.model = Model(
+                self.lr,
+                encoder,
+                decoder,
+                beta=self.beta,
+                min_dist=self.min_dist,
+                reconstruction_loss=self.reconstruction_loss,
+            )
 
             if precomputed_graph is not None:
                 print("Using precomputed graph")
                 graph = precomputed_graph
             elif hnsw_index is not None:
                 # Use hnswlib index for efficient KNN - no need to load all data
-                print(f"Building UMAP graph using hnswlib index (batch_size={knn_batch_size})...")
+                print(
+                    f"Building UMAP graph using hnswlib index (batch_size={knn_batch_size})..."
+                )
                 graph = get_umap_graph_from_hnswlib(
-                    hnsw_index, dataset, get_item_from_dataset,
-                    n_neighbors=self.n_neighbors, batch_size=knn_batch_size,
-                    random_state=self.random_state, verbose=True
+                    hnsw_index,
+                    dataset,
+                    get_item_from_dataset,
+                    n_neighbors=self.n_neighbors,
+                    batch_size=knn_batch_size,
+                    random_state=self.random_state,
+                    verbose=True,
                 )
             else:
                 # Extract sample for graph construction
@@ -245,24 +280,42 @@ class PUMAP():
                 sample_size = self.graph_sample_size
 
                 if sample_size is not None and sample_size < n_dataset:
-                    print(f"Sampling {sample_size} points from {n_dataset} for graph construction...")
+                    print(
+                        f"Sampling {sample_size} points from {n_dataset} for graph construction..."
+                    )
                     X_sample, sample_indices = extract_data_sample_from_dataset(
                         dataset, sample_size=sample_size, random_state=self.random_state
                     )
                     print("Building UMAP graph from sample...")
-                    graph = get_umap_graph(X_sample, n_neighbors=self.n_neighbors, metric=self.metric, random_state=self.random_state)
+                    graph = get_umap_graph(
+                        X_sample,
+                        n_neighbors=self.n_neighbors,
+                        metric=self.metric,
+                        random_state=self.random_state,
+                    )
 
                     # Create a subset dataset for training (only sampled points)
                     dataset = Subset(dataset, sample_indices)
                 else:
-                    print(f"Extracting all {n_dataset} samples for graph construction...")
-                    X_all, _ = extract_data_sample_from_dataset(dataset, sample_size=None)
+                    print(
+                        f"Extracting all {n_dataset} samples for graph construction..."
+                    )
+                    X_all, _ = extract_data_sample_from_dataset(
+                        dataset, sample_size=None
+                    )
                     print("Building UMAP graph...")
-                    graph = get_umap_graph(X_all, n_neighbors=self.n_neighbors, metric=self.metric, random_state=self.random_state)
+                    graph = get_umap_graph(
+                        X_all,
+                        n_neighbors=self.n_neighbors,
+                        metric=self.metric,
+                        random_state=self.random_state,
+                    )
 
             trainer.fit(
                 model=self.model,
-                datamodule=Datamodule(UMAPDataset(dataset, graph), self.batch_size, self.num_workers)
+                datamodule=Datamodule(
+                    UMAPDataset(dataset, graph), self.batch_size, self.num_workers
+                ),
             )
         else:
             # For match_nonparametric_umap mode, sample if needed
@@ -270,45 +323,71 @@ class PUMAP():
             sample_size = self.graph_sample_size
 
             if sample_size is not None and sample_size < n_dataset:
-                print(f"Sampling {sample_size} points from {n_dataset} for non-parametric UMAP...")
+                print(
+                    f"Sampling {sample_size} points from {n_dataset} for non-parametric UMAP..."
+                )
                 X_sample, sample_indices = extract_data_sample_from_dataset(
                     dataset, sample_size=sample_size, random_state=self.random_state
                 )
                 dataset = Subset(dataset, sample_indices)
             else:
                 print(f"Extracting all {n_dataset} samples for non-parametric UMAP...")
-                X_sample, _ = extract_data_sample_from_dataset(dataset, sample_size=None)
+                X_sample, _ = extract_data_sample_from_dataset(
+                    dataset, sample_size=None
+                )
 
             print("Fitting Non parametric Umap")
             non_parametric_umap = UMAP(
-                n_neighbors=self.n_neighbors, min_dist=self.min_dist, metric=self.metric,
-                n_components=self.n_components, random_state=self.random_state, verbose=True
+                n_neighbors=self.n_neighbors,
+                min_dist=self.min_dist,
+                metric=self.metric,
+                n_components=self.n_components,
+                random_state=self.random_state,
+                verbose=True,
             )
-            non_parametric_embeddings = non_parametric_umap.fit_transform(torch.flatten(X_sample, 1, -1).numpy())
-            self.model = Model(self.lr, encoder, decoder, beta=self.beta, reconstruction_loss=self.reconstruction_loss, match_nonparametric_umap=self.match_nonparametric_umap)
+            non_parametric_embeddings = non_parametric_umap.fit_transform(
+                torch.flatten(X_sample, 1, -1).numpy()
+            )
+            self.model = Model(
+                self.lr,
+                encoder,
+                decoder,
+                beta=self.beta,
+                reconstruction_loss=self.reconstruction_loss,
+                match_nonparametric_umap=self.match_nonparametric_umap,
+            )
             print("Training NN to match embeddings")
             trainer.fit(
                 model=self.model,
-                datamodule=Datamodule(MatchDataset(dataset, non_parametric_embeddings), self.batch_size, self.num_workers)
+                datamodule=Datamodule(
+                    MatchDataset(dataset, non_parametric_embeddings),
+                    self.batch_size,
+                    self.num_workers,
+                ),
             )
-        
+
     @torch.no_grad()
     def transform(self, X):
-        print(f"Reducing array of shape {X.shape} to ({X.shape[0]}, {self.n_components})")
+        print(
+            f"Reducing array of shape {X.shape} to ({X.shape[0]}, {self.n_components})"
+        )
         return self.model.encoder(X).detach().cpu().numpy()
-    
+
     @torch.no_grad()
     def inverse_transform(self, Z):
         return self.model.decoder(Z).detach().cpu().numpy()
-    
+
     def save(self, path):
-        with open(path, 'wb') as oup:
+        with open(path, "wb") as oup:
             dill.dump(self, oup)
         print(f"Pickled PUMAP object at {path}")
-        
-def load_pumap(path): 
-    print("Loading PUMAP object from pickled file.")
-    with open(path, 'rb') as inp: return dill.load(inp)
 
-if __name__== "__main__":
+
+def load_pumap(path):
+    print("Loading PUMAP object from pickled file.")
+    with open(path, "rb") as inp:
+        return dill.load(inp)
+
+
+if __name__ == "__main__":
     pass

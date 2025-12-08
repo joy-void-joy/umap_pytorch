@@ -5,8 +5,10 @@ from umap.umap_ import fuzzy_simplicial_set
 import torch
 from scipy.sparse import csr_matrix
 
+
 def convert_distance_to_probability(distances, a=1.0, b=1.0):
     return -torch.log1p(a * distances ** (2 * b))
+
 
 def compute_cross_entropy(
     probabilities_graph, probabilities_distance, EPS=1e-4, repulsion_strength=1.0
@@ -17,30 +19,37 @@ def compute_cross_entropy(
     )
     repellant_term = (
         -(1.0 - probabilities_graph)
-        * (torch.nn.functional.logsigmoid(probabilities_distance)-probabilities_distance)
-        * repulsion_strength)
+        * (
+            torch.nn.functional.logsigmoid(probabilities_distance)
+            - probabilities_distance
+        )
+        * repulsion_strength
+    )
 
     # balance the expected losses between atrraction and repel
     CE = attraction_term + repellant_term
     return attraction_term, repellant_term, CE
+
 
 def umap_loss(embedding_to, embedding_from, _a, _b, batch_size, negative_sample_rate=5):
     # get negative samples by randomly shuffling the batch
     embedding_neg_to = embedding_to.repeat(negative_sample_rate, 1)
     repeat_neg = embedding_from.repeat(negative_sample_rate, 1)
     embedding_neg_from = repeat_neg[torch.randperm(repeat_neg.shape[0])]
-    distance_embedding = torch.cat((
-        (embedding_to - embedding_from).norm(dim=1),
-        (embedding_neg_to - embedding_neg_from).norm(dim=1)
-    ), dim=0)
+    distance_embedding = torch.cat(
+        (
+            (embedding_to - embedding_from).norm(dim=1),
+            (embedding_neg_to - embedding_neg_from).norm(dim=1),
+        ),
+        dim=0,
+    )
 
     # convert probabilities to distances
-    probabilities_distance = convert_distance_to_probability(
-        distance_embedding, _a, _b
-    )
+    probabilities_distance = convert_distance_to_probability(distance_embedding, _a, _b)
     # set true probabilities based on negative sampling
     probabilities_graph = torch.cat(
-        (torch.ones(batch_size), torch.zeros(batch_size * negative_sample_rate)), dim=0,
+        (torch.ones(batch_size), torch.zeros(batch_size * negative_sample_rate)),
+        dim=0,
     )
 
     # compute cross entropy
@@ -50,6 +59,7 @@ def umap_loss(embedding_to, embedding_from, _a, _b, batch_size, negative_sample_
     )
     loss = torch.mean(ce_loss)
     return loss
+
 
 def get_umap_graph(X, n_neighbors=10, metric="cosine", random_state=None):
     random_state = check_random_state(None) if random_state == None else random_state
@@ -67,7 +77,7 @@ def get_umap_graph(X, n_neighbors=10, metric="cosine", random_state=None):
         n_trees=n_trees,
         n_iters=n_iters,
         max_candidates=60,
-        verbose=True
+        verbose=True,
     )
     # get indices and distances
     knn_indices, knn_dists = nnd.neighbor_graph
@@ -76,18 +86,20 @@ def get_umap_graph(X, n_neighbors=10, metric="cosine", random_state=None):
     knn_indices, knn_dists = nnd.neighbor_graph
     # build fuzzy_simplicial_set
     umap_graph, sigmas, rhos = fuzzy_simplicial_set(
-        X = X,
-        n_neighbors = n_neighbors,
-        metric = metric,
-        random_state = random_state,
-        knn_indices= knn_indices,
-        knn_dists = knn_dists,
+        X=X,
+        n_neighbors=n_neighbors,
+        metric=metric,
+        random_state=random_state,
+        knn_indices=knn_indices,
+        knn_dists=knn_dists,
     )
 
     return umap_graph
 
 
-def get_umap_graph_from_precomputed_knn(knn_indices, knn_dists, n_samples, n_neighbors=10, random_state=None):
+def get_umap_graph_from_precomputed_knn(
+    knn_indices, knn_dists, n_samples, n_neighbors=10, random_state=None
+):
     """
     Build a UMAP graph from precomputed KNN indices and distances.
 
@@ -104,7 +116,11 @@ def get_umap_graph_from_precomputed_knn(knn_indices, knn_dists, n_samples, n_nei
     Returns:
         UMAP graph as a sparse matrix.
     """
-    random_state = check_random_state(None) if random_state is None else check_random_state(random_state)
+    random_state = (
+        check_random_state(None)
+        if random_state is None
+        else check_random_state(random_state)
+    )
 
     # Create a dummy X just for the fuzzy_simplicial_set call
     # It's only used for shape, not actual computation when knn_indices/dists are provided
@@ -122,7 +138,9 @@ def get_umap_graph_from_precomputed_knn(knn_indices, knn_dists, n_samples, n_nei
     return umap_graph
 
 
-def get_knn_from_hnswlib_batched(hnsw_index, dataset, get_item_fn, n_neighbors=10, batch_size=1000, verbose=True):
+def get_knn_from_hnswlib_batched(
+    hnsw_index, dataset, get_item_fn, n_neighbors=10, batch_size=1000, verbose=True
+):
     """
     Query an hnswlib index in batches to get KNN for a dataset.
 
@@ -151,7 +169,9 @@ def get_knn_from_hnswlib_batched(hnsw_index, dataset, get_item_fn, n_neighbors=1
         end_idx = min(start_idx + batch_size, n_samples)
 
         if verbose and batch_idx % 10 == 0:
-            print(f"Processing batch {batch_idx + 1}/{n_batches} (samples {start_idx}-{end_idx})")
+            print(
+                f"Processing batch {batch_idx + 1}/{n_batches} (samples {start_idx}-{end_idx})"
+            )
 
         # Load batch data
         batch_data = []
@@ -172,7 +192,15 @@ def get_knn_from_hnswlib_batched(hnsw_index, dataset, get_item_fn, n_neighbors=1
     return knn_indices, knn_dists
 
 
-def get_umap_graph_from_hnswlib(hnsw_index, dataset, get_item_fn, n_neighbors=10, batch_size=1000, random_state=None, verbose=True):
+def get_umap_graph_from_hnswlib(
+    hnsw_index,
+    dataset,
+    get_item_fn,
+    n_neighbors=10,
+    batch_size=1000,
+    random_state=None,
+    verbose=True,
+):
     """
     Build a UMAP graph using an hnswlib index for KNN queries.
 
@@ -193,7 +221,9 @@ def get_umap_graph_from_hnswlib(hnsw_index, dataset, get_item_fn, n_neighbors=10
         UMAP graph as a sparse matrix.
     """
     if verbose:
-        print(f"Querying hnswlib index for {len(dataset)} samples with {n_neighbors} neighbors...")
+        print(
+            f"Querying hnswlib index for {len(dataset)} samples with {n_neighbors} neighbors..."
+        )
 
     knn_indices, knn_dists = get_knn_from_hnswlib_batched(
         hnsw_index, dataset, get_item_fn, n_neighbors, batch_size, verbose

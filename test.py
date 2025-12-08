@@ -25,7 +25,9 @@ class MNISTDataset(Dataset):
 
 
 # Load the MNIST dataset
-train_dataset = torchvision.datasets.MNIST(root='./data', train=True, transform=transforms.ToTensor(), download=True)
+train_dataset = torchvision.datasets.MNIST(
+    root="./data", train=True, transform=transforms.ToTensor(), download=True
+)
 
 # Wrap it with our custom dataset (PUMAP will extract just the data, ignoring labels)
 dataset = MNISTDataset(train_dataset)
@@ -34,17 +36,25 @@ dataset = MNISTDataset(train_dataset)
 labels = [str(train_dataset[i][1]) for i in range(len(train_dataset))]
 
 # Create and fit PUMAP - now accepts a Dataset directly!
-pumap = PUMAP(epochs=5, min_dist=1, n_neighbors=50, num_workers=8, decoder=True, beta=0.01, match_nonparametric_umap=True)
+pumap = PUMAP(
+    epochs=5,
+    min_dist=1,
+    n_neighbors=50,
+    num_workers=8,
+    decoder=True,
+    beta=0.01,
+    match_nonparametric_umap=True,
+)
 pumap.fit(dataset)
-pumap.save('yo.pkl')
-pumap = load_pumap('yo.pkl')
+pumap.save("yo.pkl")
+pumap = load_pumap("yo.pkl")
 
 # For transform, we still need to pass a tensor
 X = torch.stack([dataset[i][0] for i in range(len(dataset))])
 embedding = pumap.transform(X)
 print(embedding.shape, embedding)
-sns.scatterplot(x=embedding[:,0], y=embedding[:,1], hue=labels, s=0.4)
-plt.savefig('test4.png')
+sns.scatterplot(x=embedding[:, 0], y=embedding[:, 1], hue=labels, s=0.4)
+plt.savefig("test4.png")
 
 
 def regenerate_and_plot(i=6):
@@ -52,9 +62,10 @@ def regenerate_and_plot(i=6):
     regenerated = pumap.inverse_transform(torch.Tensor(some_points))
 
     for i in range(6):
-        img = regenerated[i,0]
+        img = regenerated[i, 0]
         img = Image.fromarray(np.uint8(img))
         img.save("image_{}.png".format(i))
+
 
 regenerate_and_plot()
 

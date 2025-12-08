@@ -12,7 +12,6 @@ def get_item_from_dataset(dataset, index):
 
 
 def get_graph_elements(graph_, n_epochs):
-
     graph = graph_.tocoo()
     # eliminate duplicate entries by summing them together
     graph.sum_duplicates()
@@ -49,7 +48,9 @@ class UMAPDataset(Dataset):
             graph_: The UMAP graph (sparse matrix) defining edge relationships.
             n_epochs: Number of training epochs for edge sampling.
         """
-        graph, epochs_per_sample, head, tail, weight, n_vertices = get_graph_elements(graph_, n_epochs)
+        graph, epochs_per_sample, head, tail, weight, n_vertices = get_graph_elements(
+            graph_, n_epochs
+        )
 
         self.edges_to_exp, self.edges_from_exp = (
             np.repeat(head, epochs_per_sample.astype("int")),
