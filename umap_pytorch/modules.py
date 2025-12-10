@@ -71,7 +71,7 @@ def get_umap_graph(X, n_neighbors=10, metric="cosine", random_state=None):
 
     # get nearest neighbors
     nnd = NNDescent(
-        X.reshape((len(X), np.product(np.shape(X)[1:]))),
+        X.reshape((len(X), int(np.prod(np.shape(X)[1:])))),
         n_neighbors=n_neighbors,
         metric=metric,
         n_trees=n_trees,
@@ -80,12 +80,12 @@ def get_umap_graph(X, n_neighbors=10, metric="cosine", random_state=None):
         verbose=True,
     )
     # get indices and distances
-    knn_indices, knn_dists = nnd.neighbor_graph
+    neighbor_graph = nnd.neighbor_graph
+    assert neighbor_graph is not None
+    knn_indices, knn_dists = neighbor_graph
 
-    # get indices and distances
-    knn_indices, knn_dists = nnd.neighbor_graph
     # build fuzzy_simplicial_set
-    umap_graph, sigmas, rhos = fuzzy_simplicial_set(
+    result = fuzzy_simplicial_set(
         X=X,
         n_neighbors=n_neighbors,
         metric=metric,
@@ -93,6 +93,7 @@ def get_umap_graph(X, n_neighbors=10, metric="cosine", random_state=None):
         knn_indices=knn_indices,
         knn_dists=knn_dists,
     )
+    umap_graph = result[0]
 
     return umap_graph
 
@@ -126,7 +127,7 @@ def get_umap_graph_from_precomputed_knn(
     # It's only used for shape, not actual computation when knn_indices/dists are provided
     X_dummy = np.zeros((n_samples, 1))
 
-    umap_graph, sigmas, rhos = fuzzy_simplicial_set(
+    result = fuzzy_simplicial_set(
         X=X_dummy,
         n_neighbors=n_neighbors,
         metric="precomputed",
@@ -134,6 +135,7 @@ def get_umap_graph_from_precomputed_knn(
         knn_indices=knn_indices,
         knn_dists=knn_dists,
     )
+    umap_graph = result[0]
 
     return umap_graph
 

@@ -238,7 +238,8 @@ class PUMAP:
 
         if self.decoder is None or isinstance(self.decoder, nn.Module):
             decoder = self.decoder
-        elif self.decoder == True:
+        else:
+            # self.decoder == True means use default decoder
             decoder = default_decoder(data_shape, self.n_components)
 
         if not self.match_nonparametric_umap:
@@ -355,6 +356,8 @@ class PUMAP:
 
     @torch.no_grad()
     def inverse_transform(self, Z):
+        if self.model.decoder is None:
+            raise RuntimeError("Cannot inverse_transform without a decoder")
         return self.model.decoder(Z).detach().cpu().numpy()
 
     def save(self, path):
