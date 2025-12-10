@@ -138,100 +138,33 @@ def get_umap_graph_from_precomputed_knn(
     return umap_graph
 
 
-def get_knn_from_hnswlib_batched(
-    hnsw_index, dataset, get_item_fn, n_neighbors=10, batch_size=1000, verbose=True
-):
+def get_knn_from_hnswlib(hnsw_index, data, n_neighbors=10):
     """
-    Query an hnswlib index in batches to get KNN for a dataset.
-
-    This function processes the dataset in batches to avoid loading all data
-    into memory at once. It's suitable for very large datasets.
+    Get KNN indices and distances from an hnswlib index.
 
     Args:
         hnsw_index: An hnswlib index that has been built on the data.
-        dataset: A PyTorch Dataset.
-        get_item_fn: Function to extract data from dataset items (handles tuples).
+        data: Query data as numpy array of shape (n_samples, n_features).
         n_neighbors: Number of neighbors to retrieve.
-        batch_size: Number of samples to process at once.
-        verbose: Whether to print progress.
 
     Returns:
         Tuple of (knn_indices, knn_dists) arrays.
     """
-    n_samples = len(dataset)
-    knn_indices = np.zeros((n_samples, n_neighbors), dtype=np.int64)
-    knn_dists = np.zeros((n_samples, n_neighbors), dtype=np.float32)
-
-    n_batches = (n_samples + batch_size - 1) // batch_size
-
-    for batch_idx in range(n_batches):
-        start_idx = batch_idx * batch_size
-        end_idx = min(start_idx + batch_size, n_samples)
-
-        if verbose and batch_idx % 10 == 0:
-            print(
-                f"Processing batch {batch_idx + 1}/{n_batches} (samples {start_idx}-{end_idx})"
-            )
-
-        # Load batch data
-        batch_data = []
-        for i in range(start_idx, end_idx):
-            item = get_item_fn(dataset, i)
-            if isinstance(item, torch.Tensor):
-                item = item.numpy()
-            batch_data.append(item.flatten())
-
-        batch_data = np.array(batch_data, dtype=np.float32)
-
-        # Query hnswlib index
-        labels, distances = hnsw_index.knn_query(batch_data, k=n_neighbors)
-
-        knn_indices[start_idx:end_idx] = labels
-        knn_dists[start_idx:end_idx] = distances
-
-    return knn_indices, knn_dists
+    labels, distances = hnsw_index.knn_query(data, k=n_neighbors)
+    return labels.astype(np.int64), distances.astype(np.float32)
 
 
-def get_umap_graph_from_hnswlib(
-    hnsw_index,
-    dataset,
-    get_item_fn,
-    n_neighbors=10,
-    batch_size=1000,
-    random_state=None,
-    verbose=True,
-):
+def get_knn_from_faiss(faiss_index, data, n_neighbors=10):
     """
-    Build a UMAP graph using an hnswlib index for KNN queries.
-
-    This allows building a UMAP graph on very large datasets without loading
-    all data into memory. The hnswlib index should have been built on the
-    same data.
+    Get KNN indices and distances from a faiss index.
 
     Args:
-        hnsw_index: An hnswlib index built on the dataset.
-        dataset: A PyTorch Dataset.
-        get_item_fn: Function to extract data from dataset items.
-        n_neighbors: Number of neighbors for UMAP graph.
-        batch_size: Batch size for KNN queries.
-        random_state: Random state for reproducibility.
-        verbose: Whether to print progress.
+        faiss_index: A faiss index that has been built on the data.
+        data: Query data as numpy array of shape (n_samples, n_features).
+        n_neighbors: Number of neighbors to retrieve.
 
     Returns:
-        UMAP graph as a sparse matrix.
+        Tuple of (knn_indices, knn_dists) arrays.
     """
-    if verbose:
-        print(
-            f"Querying hnswlib index for {len(dataset)} samples with {n_neighbors} neighbors..."
-        )
-
-    knn_indices, knn_dists = get_knn_from_hnswlib_batched(
-        hnsw_index, dataset, get_item_fn, n_neighbors, batch_size, verbose
-    )
-
-    if verbose:
-        print("Building fuzzy simplicial set...")
-
-    return get_umap_graph_from_precomputed_knn(
-        knn_indices, knn_dists, len(dataset), n_neighbors, random_state
-    )
+    distances, labels = faiss_index.search(data.astype(np.float32), n_neighbors)
+    return labels.astype(np.int64), distances.astype(np.float32)

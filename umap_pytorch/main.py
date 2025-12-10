@@ -11,7 +11,6 @@ from umap_pytorch.data import UMAPDataset, MatchDataset, get_item_from_dataset
 from umap_pytorch.modules import (
     get_umap_graph,
     umap_loss,
-    get_umap_graph_from_hnswlib,
     get_umap_graph_from_precomputed_knn,
 )
 from umap_pytorch.model import default_encoder, default_decoder
@@ -208,9 +207,7 @@ class PUMAP:
         self.graph_sample_size = graph_sample_size
         self.data_shape = data_shape
 
-    def fit(
-        self, dataset, precomputed_graph=None, hnsw_index=None, knn_batch_size=1000
-    ):
+    def fit(self, dataset, precomputed_graph=None):
         """
         Fit the parametric UMAP model.
 
@@ -219,11 +216,8 @@ class PUMAP:
                      a tuple where the first element is the data tensor.
             precomputed_graph: Optional precomputed UMAP graph (sparse matrix).
                                If provided, skips graph construction entirely.
-            hnsw_index: Optional hnswlib index for efficient KNN queries.
-                        Use this for very large datasets (>100k samples) to avoid
-                        loading all data into memory. The index should be built
-                        on the same data.
-            knn_batch_size: Batch size for querying the hnswlib index.
+                               Use get_umap_graph_from_precomputed_knn() to build
+                               this from KNN indices/distances.
         """
         trainer = pl.Trainer(accelerator="gpu", devices=1, max_epochs=self.epochs)
 
@@ -260,20 +254,6 @@ class PUMAP:
             if precomputed_graph is not None:
                 print("Using precomputed graph")
                 graph = precomputed_graph
-            elif hnsw_index is not None:
-                # Use hnswlib index for efficient KNN - no need to load all data
-                print(
-                    f"Building UMAP graph using hnswlib index (batch_size={knn_batch_size})..."
-                )
-                graph = get_umap_graph_from_hnswlib(
-                    hnsw_index,
-                    dataset,
-                    get_item_from_dataset,
-                    n_neighbors=self.n_neighbors,
-                    batch_size=knn_batch_size,
-                    random_state=self.random_state,
-                    verbose=True,
-                )
             else:
                 # Extract sample for graph construction
                 n_dataset = len(dataset)

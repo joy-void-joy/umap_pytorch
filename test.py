@@ -89,35 +89,51 @@ pumap = PUMAP(
 pumap.fit(your_large_dataset)
 
 
-# Example 2: Using a precomputed hnswlib index
+# Example 2: Using a precomputed graph with faiss
 # ------------------------------------------------
-# If you have an hnswlib index, you can use it to build the graph
-# without loading all data into memory. This is ideal for 500GB+ datasets.
+from umap_pytorch import get_umap_graph_from_precomputed_knn, get_knn_from_faiss
+import faiss
 
+# Assuming you have a faiss index and your data
+# faiss_index = faiss.read_index('your_index.bin')
+# data = np.array(...)  # Your data as numpy array
+
+n_neighbors = 50
+knn_indices, knn_dists = get_knn_from_faiss(faiss_index, data, n_neighbors)
+graph = get_umap_graph_from_precomputed_knn(
+    knn_indices, knn_dists, n_samples=len(data), n_neighbors=n_neighbors
+)
+
+pumap = PUMAP(epochs=10, n_neighbors=n_neighbors)
+pumap.fit(dataset, precomputed_graph=graph)
+
+
+# Example 3: Using a precomputed graph with hnswlib
+# --------------------------------------------------
+from umap_pytorch import get_umap_graph_from_precomputed_knn, get_knn_from_hnswlib
 import hnswlib
 
-# Assuming you already have your hnswlib index built:
-# hnsw_index = hnswlib.Index(space='l2', dim=your_dim)
+# Assuming you have an hnswlib index and your data
+# hnsw_index = hnswlib.Index(space='l2', dim=dim)
 # hnsw_index.load_index('your_index.bin')
+# data = np.array(...)  # Your data as numpy array
 
-pumap = PUMAP(
-    epochs=10,
-    n_neighbors=50,
-)
-pumap.fit(
-    your_large_dataset,
-    hnsw_index=hnsw_index,
-    knn_batch_size=1000,  # Process 1000 samples at a time for KNN queries
+n_neighbors = 50
+knn_indices, knn_dists = get_knn_from_hnswlib(hnsw_index, data, n_neighbors)
+graph = get_umap_graph_from_precomputed_knn(
+    knn_indices, knn_dists, n_samples=len(data), n_neighbors=n_neighbors
 )
 
+pumap = PUMAP(epochs=10, n_neighbors=n_neighbors)
+pumap.fit(dataset, precomputed_graph=graph)
 
-# Example 3: Using a precomputed graph
-# ------------------------------------
-# If you've already computed the UMAP graph yourself, you can pass it directly.
+
+# Example 4: Using precomputed KNN directly
+# ------------------------------------------
+# If you already have KNN indices and distances from any source:
 
 from umap_pytorch import get_umap_graph_from_precomputed_knn
 
-# If you have precomputed KNN indices and distances:
 # knn_indices: shape (n_samples, n_neighbors) - neighbor indices
 # knn_dists: shape (n_samples, n_neighbors) - neighbor distances
 
@@ -127,40 +143,4 @@ graph = get_umap_graph_from_precomputed_knn(
 
 pumap = PUMAP(epochs=10)
 pumap.fit(dataset, precomputed_graph=graph)
-
-
-# Example 4: Building hnswlib index from your dataset
-# ----------------------------------------------------
-# If you need to build the hnswlib index first:
-
-import hnswlib
-
-# Get dimensionality from first sample
-first_sample = dataset[0]
-if isinstance(first_sample, tuple):
-    first_sample = first_sample[0]
-dim = first_sample.flatten().shape[0]
-
-# Create index
-hnsw_index = hnswlib.Index(space='l2', dim=dim)
-hnsw_index.init_index(max_elements=len(dataset), ef_construction=200, M=16)
-
-# Add elements in batches
-batch_size = 10000
-for i in range(0, len(dataset), batch_size):
-    batch_end = min(i + batch_size, len(dataset))
-    batch_data = []
-    for j in range(i, batch_end):
-        item = dataset[j]
-        if isinstance(item, tuple):
-            item = item[0]
-        batch_data.append(item.flatten().numpy())
-    hnsw_index.add_items(np.array(batch_data), list(range(i, batch_end)))
-
-# Save for later use
-hnsw_index.save_index('my_index.bin')
-
-# Now use with PUMAP
-pumap = PUMAP(epochs=10, n_neighbors=50)
-pumap.fit(dataset, hnsw_index=hnsw_index)
 """
